@@ -8,6 +8,8 @@ const ELEMENTS = {
   setupForm: document.getElementById('setup-form'),
   childName: document.getElementById('child-name'),
   modeSelect: document.getElementById('mode-select'),
+  specialMultiplyToggle: document.getElementById('special-multiply-toggle'),
+  specialMultiplyOption: document.getElementById('special-multiply-option'),
   lengthSelect: document.getElementById('length-select'),
   saveToggle: document.getElementById('save-toggle'),
   soundToggle: document.getElementById('sound-toggle'),
@@ -74,6 +76,7 @@ function createInitialState() {
   return {
     playerName: '',
     mode: 'mix',
+    specialMultiplyOnly: false,
     saveResults: true,
     effectsEnabled: true,
     totalQuestions: LENGTHS.long,
@@ -113,13 +116,13 @@ function uniqueOptions(correct, spread = 12) {
 
 function pickOperation(mode) {
   if (mode === 'addsub') return Math.random() < 0.5 ? 'add' : 'sub';
-  if (mode === 'multiply' || mode === 'special-multiply') return 'mul';
+  if (mode === 'multiply') return 'mul';
   return shuffle(['add', 'sub', 'mul'])[0];
 }
 
-function makeBaseNumbers(operation, mode) {
+function makeBaseNumbers(operation, specialMultiplyOnly) {
   if (operation === 'mul') {
-    if (mode === 'special-multiply') {
+    if (specialMultiplyOnly) {
       const left = [2, 3, 4, 5, 10][rand(0, 4)];
       const right = rand(0, 10);
       return [left, right];
@@ -164,9 +167,9 @@ function getTaskKind(index) {
   return order[index % order.length];
 }
 
-function createQuestion(index, mode) {
+function createQuestion(index, mode, specialMultiplyOnly) {
   const operation = pickOperation(mode);
-  const [a, b] = makeBaseNumbers(operation, mode);
+  const [a, b] = makeBaseNumbers(operation, specialMultiplyOnly);
   const answer = solve(operation, a, b);
   const kind = getTaskKind(index);
   const prompt = `${a} ${signFor(operation)} ${b}`;
@@ -221,7 +224,7 @@ function createQuestion(index, mode) {
   const sets = [];
   for (let i = 0; i < 3; i += 1) {
     const op = pickOperation(mode);
-    const [x, y] = makeBaseNumbers(op, mode);
+    const [x, y] = makeBaseNumbers(op, specialMultiplyOnly);
     sets.push({
       expression: `${x} ${signFor(op)} ${y}`,
       result: solve(op, x, y),
@@ -240,13 +243,19 @@ function createQuestion(index, mode) {
   };
 }
 
-function generateQuestions(total, mode) {
-  return Array.from({ length: total }, (_, index) => createQuestion(index, mode));
+function generateQuestions(total, mode, specialMultiplyOnly) {
+  return Array.from({ length: total }, (_, index) => createQuestion(index, mode, specialMultiplyOnly));
 }
 
 function showScreen(name) {
   Object.values(SCREENS).forEach((screen) => screen.classList.remove('active'));
   SCREENS[name].classList.add('active');
+}
+
+function updateSpecialMultiplyVisibility() {
+  const shouldShow = ELEMENTS.modeSelect.value === 'mix' || ELEMENTS.modeSelect.value === 'multiply';
+  ELEMENTS.specialMultiplyOption.classList.toggle('hidden', !shouldShow);
+  if (!shouldShow) ELEMENTS.specialMultiplyToggle.checked = false;
 }
 
 function renderHistory() {
@@ -277,14 +286,14 @@ function renderHistory() {
     .join('');
 }
 
-function getModeLabel(mode) {
+function getModeLabel(mode, specialMultiplyOnly = false) {
   const labels = {
     mix: 'Bunter Mix',
     addsub: 'Addition & Subtraktion',
     multiply: 'Multiplikation',
-    'special-multiply': 'Einmaleins mit 2, 3, 4, 5, 10',
   };
-  return labels[mode] || mode;
+  const base = labels[mode] || mode;
+  return specialMultiplyOnly ? `${base} – nur mit 2, 3, 4, 5, 10` : base;
 }
 
 function updateHud() {
@@ -492,7 +501,7 @@ function finishGame() {
   const rate = accuracy();
   const grade = determineGrade(rate);
   ELEMENTS.resultHeadline.textContent = `Super gemacht, ${state.playerName}!`;
-  ELEMENTS.resultSummary.textContent = `Du hast ${state.totalQuestions} Aufgaben im Modus „${getModeLabel(state.mode)}“ gespielt.`;
+  ELEMENTS.resultSummary.textContent = `Du hast ${state.totalQuestions} Aufgaben im Modus „${getModeLabel(state.mode, state.specialMultiplyOnly)}“ gespielt.`;
   ELEMENTS.finalGrade.textContent = String(grade);
   ELEMENTS.finalScore.textContent = String(state.score);
   ELEMENTS.finalCorrect.textContent = String(state.correct);
@@ -504,7 +513,7 @@ function finishGame() {
     const history = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
     history.push({
       name: state.playerName,
-      modeLabel: getModeLabel(state.mode),
+      modeLabel: getModeLabel(state.mode, state.specialMultiplyOnly),
       grade,
       score: state.score,
       stars: state.stars,
@@ -522,10 +531,11 @@ function startGame(config) {
   state = createInitialState();
   state.playerName = config.name;
   state.mode = config.mode;
+  state.specialMultiplyOnly = config.specialMultiplyOnly;
   state.totalQuestions = LENGTHS[config.length] || LENGTHS.long;
   state.saveResults = config.saveResults;
   state.effectsEnabled = config.effectsEnabled;
-  state.questions = generateQuestions(state.totalQuestions, state.mode);
+  state.questions = generateQuestions(state.totalQuestions, state.mode, state.specialMultiplyOnly);
   state.currentIndex = 0;
   showScreen('game');
   renderQuestion();
@@ -534,6 +544,7 @@ function startGame(config) {
 function backToHome() {
   showScreen('start');
   renderHistory();
+  updateSpecialMultiplyVisibility();
 }
 
 ELEMENTS.setupForm.addEventListener('submit', (event) => {
@@ -541,17 +552,20 @@ ELEMENTS.setupForm.addEventListener('submit', (event) => {
   startGame({
     name: ELEMENTS.childName.value.trim() || 'Mathe-Profi',
     mode: ELEMENTS.modeSelect.value,
+    specialMultiplyOnly: ELEMENTS.specialMultiplyToggle.checked,
     length: ELEMENTS.lengthSelect.value,
     saveResults: ELEMENTS.saveToggle.checked,
     effectsEnabled: ELEMENTS.soundToggle.checked,
   });
 });
 
+ELEMENTS.modeSelect.addEventListener('change', updateSpecialMultiplyVisibility);
 ELEMENTS.checkAnswer.addEventListener('click', submitAnswer);
 ELEMENTS.nextQuestion.addEventListener('click', nextStep);
 ELEMENTS.restartSession.addEventListener('click', () => startGame({
   name: state.playerName,
   mode: state.mode,
+  specialMultiplyOnly: state.specialMultiplyOnly,
   length: Object.entries(LENGTHS).find(([, value]) => value === state.totalQuestions)?.[0] || 'long',
   saveResults: state.saveResults,
   effectsEnabled: state.effectsEnabled,
@@ -560,6 +574,7 @@ ELEMENTS.backHome.addEventListener('click', backToHome);
 ELEMENTS.playAgain.addEventListener('click', () => startGame({
   name: state.playerName,
   mode: state.mode,
+  specialMultiplyOnly: state.specialMultiplyOnly,
   length: Object.entries(LENGTHS).find(([, value]) => value === state.totalQuestions)?.[0] || 'long',
   saveResults: state.saveResults,
   effectsEnabled: state.effectsEnabled,
@@ -580,3 +595,4 @@ document.addEventListener('keydown', (event) => {
 });
 
 renderHistory();
+updateSpecialMultiplyVisibility();
