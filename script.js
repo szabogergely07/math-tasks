@@ -14,9 +14,8 @@ const ELEMENTS = {
   saveToggle: document.getElementById('save-toggle'),
   soundToggle: document.getElementById('sound-toggle'),
   clearHistory: document.getElementById('clear-history'),
-  exportHistory: document.getElementById('export-history'),
-  importHistory: document.getElementById('import-history'),
-  importHistoryFile: document.getElementById('import-history-file'),
+  syncHistory: document.getElementById('sync-history'),
+  syncStatus: document.getElementById('sync-status'),
   historyList: document.getElementById('history-list'),
   playerName: document.getElementById('player-name-display'),
   roundTitle: document.getElementById('round-title'),
@@ -47,7 +46,6 @@ const ELEMENTS = {
   goHomeResults: document.getElementById('go-home-results'),
 };
 
-const STORAGE_KEY = 'mathe-abenteuer-history-v1';
 const HISTORY_PASSWORD = 'schule';
 const LENGTHS = {
   short: 24,
@@ -55,6 +53,9 @@ const LENGTHS = {
   long: 90,
   epic: 140,
 };
+const LOCAL_FALLBACK_KEY = 'mathe-abenteuer-history-fallback-v2';
+const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.apiBaseUrl ? window.APP_CONFIG.apiBaseUrl : '').replace(/\/$/, '');
+const RESULTS_ENDPOINT = API_BASE ? `${API_BASE}/results` : '/api/results';
 
 const ENCOURAGEMENTS = [
   'Du machst das klasse!',
@@ -75,6 +76,7 @@ const RESULT_MESSAGES = {
 };
 
 let state = createInitialState();
+let historyCache = [];
 
 function createInitialState() {
   return {
@@ -96,12 +98,64 @@ function createInitialState() {
   };
 }
 
-function getHistory() {
-  return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+function setSyncStatus(text) {
+  ELEMENTS.syncStatus.textContent = text;
 }
 
-function setHistory(history) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(-50)));
+function getFallbackHistory() {
+  return JSON.parse(localStorage.getItem(LOCAL_FALLBACK_KEY) || '[]');
+}
+
+function setFallbackHistory(history) {
+  localStorage.setItem(LOCAL_FALLBACK_KEY, JSON.stringify(history.slice(-100)));
+}
+
+async function loadHistory() {
+  try {
+    setSyncStatus('Lade Verlauf vom Server …');
+    const response = await fetch(RESULTS_ENDPOINT, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    historyCache = Array.isArray(data.results) ? data.results : [];
+    setSyncStatus('Verlauf vom Server geladen.');
+    renderHistory();
+  } catch (error) {
+    historyCache = getFallbackHistory();
+    setSyncStatus('Server nicht erreichbar – zeige lokalen Verlauf auf diesem Gerät.');
+    renderHistory();
+  }
+}
+
+async function saveResult(entry) {
+  try {
+    const response = await fetch(RESULTS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await loadHistory();
+  } catch (error) {
+    const fallback = getFallbackHistory();
+    fallback.push(entry);
+    setFallbackHistory(fallback);
+    historyCache = fallback.slice().reverse().reverse();
+    setSyncStatus('Server nicht erreichbar – Ergebnis lokal auf diesem Gerät gespeichert.');
+    renderHistory();
+  }
+}
+
+async function clearHistoryRemote(password) {
+  const response = await fetch(RESULTS_ENDPOINT, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  return data;
 }
 
 function rand(min, max) {
@@ -141,13 +195,11 @@ function makeBaseNumbers(operation, specialMultiplyOnly) {
     }
     return [rand(0, 10), rand(0, 10)];
   }
-
   if (operation === 'add') {
     const a = rand(0, 100);
     const b = rand(0, 100 - a);
     return [a, b];
   }
-
   const a = rand(0, 100);
   const b = rand(0, a);
   return [a, b];
@@ -194,65 +246,24 @@ function createQuestion(index, mode, specialMultiplyOnly) {
   };
 
   if (kind === 'input') {
-    return {
-      kind,
-      label: labelMap[kind],
-      prompt: `${prompt} = ?`,
-      helper: 'Schreibe das richtige Ergebnis in das Feld.',
-      answer,
-      operation,
-      a,
-      b,
-      points: 10,
-    };
+    return { kind, label: labelMap[kind], prompt: `${prompt} = ?`, helper: 'Schreibe das richtige Ergebnis in das Feld.', answer, points: 10 };
   }
-
   if (kind === 'choice' || kind === 'bonus-choice') {
-    return {
-      kind,
-      label: labelMap[kind],
-      prompt: `${prompt} = ?`,
-      helper: 'Tippe die richtige Antwort an.',
-      answer,
-      choices: uniqueOptions(answer, operation === 'mul' ? 8 : 16),
-      points: kind === 'bonus-choice' ? 20 : 12,
-      isBonus: kind === 'bonus-choice',
-    };
+    return { kind, label: labelMap[kind], prompt: `${prompt} = ?`, helper: 'Tippe die richtige Antwort an.', answer, choices: uniqueOptions(answer, operation === 'mul' ? 8 : 16), points: kind === 'bonus-choice' ? 20 : 12, isBonus: kind === 'bonus-choice' };
   }
-
   if (kind === 'truefalse') {
     const shownResult = Math.random() < 0.55 ? answer : Math.max(0, answer + rand(-10, 10) || 1);
     const isTrue = shownResult === answer;
-    return {
-      kind,
-      label: labelMap[kind],
-      prompt: `${prompt} = ${shownResult}`,
-      helper: 'Stimmt diese Rechnung?',
-      answer: isTrue ? 'wahr' : 'falsch',
-      points: 9,
-    };
+    return { kind, label: labelMap[kind], prompt: `${prompt} = ${shownResult}`, helper: 'Stimmt diese Rechnung?', answer: isTrue ? 'wahr' : 'falsch', points: 9 };
   }
-
   const sets = [];
   for (let i = 0; i < 3; i += 1) {
     const op = pickOperation(mode);
     const [x, y] = makeBaseNumbers(op, specialMultiplyOnly);
-    sets.push({
-      expression: `${x} ${signFor(op)} ${y}`,
-      result: solve(op, x, y),
-    });
+    sets.push({ expression: `${x} ${signFor(op)} ${y}`, result: solve(op, x, y) });
   }
-
   const sorted = [...sets].sort((first, second) => first.result - second.result);
-  return {
-    kind,
-    label: labelMap[kind],
-    prompt: 'Ordne die Ergebnisse von klein nach groß.',
-    helper: 'Trage 1, 2 oder 3 ein. 1 = kleinstes Ergebnis.',
-    orderItems: sets,
-    answer: sorted.map((item) => item.expression),
-    points: 15,
-  };
+  return { kind, label: labelMap[kind], prompt: 'Ordne die Ergebnisse von klein nach groß.', helper: 'Trage 1, 2 oder 3 ein. 1 = kleinstes Ergebnis.', orderItems: sets, answer: sorted.map((item) => item.expression), points: 15 };
 }
 
 function generateQuestions(total, mode, specialMultiplyOnly) {
@@ -271,17 +282,15 @@ function updateSpecialMultiplyVisibility() {
 }
 
 function renderHistory() {
-  const history = getHistory();
-  if (!history.length) {
+  if (!historyCache.length) {
     ELEMENTS.historyList.className = 'history-list empty';
     ELEMENTS.historyList.textContent = 'Noch keine Ergebnisse gespeichert.';
     return;
   }
-
   ELEMENTS.historyList.className = 'history-list';
-  ELEMENTS.historyList.innerHTML = history
+  ELEMENTS.historyList.innerHTML = historyCache
     .slice()
-    .reverse()
+    .sort((a, b) => new Date(b.createdAtIso || b.date).getTime() - new Date(a.createdAtIso || a.date).getTime())
     .map((entry) => `
       <article class="history-item">
         <div>
@@ -299,11 +308,7 @@ function renderHistory() {
 }
 
 function getModeLabel(mode, specialMultiplyOnly = false) {
-  const labels = {
-    mix: 'Bunter Mix',
-    addsub: 'Addition & Subtraktion',
-    multiply: 'Multiplikation',
-  };
+  const labels = { mix: 'Bunter Mix', addsub: 'Addition & Subtraktion', multiply: 'Multiplikation' };
   const base = labels[mode] || mode;
   return specialMultiplyOnly ? `${base} – nur mit 2, 3, 4, 5, 10` : base;
 }
@@ -335,62 +340,21 @@ function renderQuestion() {
   ELEMENTS.nextQuestion.classList.add('hidden');
 
   if (q.kind === 'input') {
-    ELEMENTS.taskArea.innerHTML = `
-      <div class="question-text">${q.prompt}</div>
-      <div class="question-subtitle">${q.helper}</div>
-      <div class="answer-inline">
-        <input class="answer-input" id="answer-input" type="number" inputmode="numeric" />
-      </div>
-    `;
+    ELEMENTS.taskArea.innerHTML = `<div class="question-text">${q.prompt}</div><div class="question-subtitle">${q.helper}</div><div class="answer-inline"><input class="answer-input" id="answer-input" type="number" inputmode="numeric" /></div>`;
     document.getElementById('answer-input').focus();
     return;
   }
-
   if (q.kind === 'choice' || q.kind === 'bonus-choice') {
-    ELEMENTS.taskArea.innerHTML = `
-      <div class="question-text">${q.prompt}</div>
-      <div class="question-subtitle">${q.helper}</div>
-      <div class="choices-grid">
-        ${q.choices
-          .map(
-            (choice) => `<button class="choice-btn" type="button" data-choice="${choice}">${choice}</button>`
-          )
-          .join('')}
-      </div>
-    `;
+    ELEMENTS.taskArea.innerHTML = `<div class="question-text">${q.prompt}</div><div class="question-subtitle">${q.helper}</div><div class="choices-grid">${q.choices.map((choice) => `<button class="choice-btn" type="button" data-choice="${choice}">${choice}</button>`).join('')}</div>`;
     bindChoiceButtons();
     return;
   }
-
   if (q.kind === 'truefalse') {
-    ELEMENTS.taskArea.innerHTML = `
-      <div class="question-text">${q.prompt}</div>
-      <div class="question-subtitle">${q.helper}</div>
-      <div class="true-false-row">
-        <button class="choice-btn" type="button" data-choice="wahr">Wahr</button>
-        <button class="choice-btn" type="button" data-choice="falsch">Falsch</button>
-      </div>
-    `;
+    ELEMENTS.taskArea.innerHTML = `<div class="question-text">${q.prompt}</div><div class="question-subtitle">${q.helper}</div><div class="true-false-row"><button class="choice-btn" type="button" data-choice="wahr">Wahr</button><button class="choice-btn" type="button" data-choice="falsch">Falsch</button></div>`;
     bindChoiceButtons();
     return;
   }
-
-  ELEMENTS.taskArea.innerHTML = `
-    <div class="question-text">${q.prompt}</div>
-    <div class="question-subtitle">${q.helper}</div>
-    <div class="order-grid">
-      ${q.orderItems
-        .map(
-          (item, index) => `
-            <div class="order-card">
-              <strong>${item.expression}</strong>
-              <input class="answer-input" type="number" min="1" max="3" data-order-index="${index}" placeholder="1 bis 3" />
-            </div>
-          `
-        )
-        .join('')}
-    </div>
-  `;
+  ELEMENTS.taskArea.innerHTML = `<div class="question-text">${q.prompt}</div><div class="question-subtitle">${q.helper}</div><div class="order-grid">${q.orderItems.map((item, index) => `<div class="order-card"><strong>${item.expression}</strong><input class="answer-input" type="number" min="1" max="3" data-order-index="${index}" placeholder="1 bis 3" /></div>`).join('')}</div>`;
 }
 
 function bindChoiceButtons() {
@@ -409,43 +373,24 @@ function readAnswer() {
     const value = document.getElementById('answer-input').value;
     return value === '' ? null : Number(value);
   }
-  if (q.kind === 'choice' || q.kind === 'bonus-choice' || q.kind === 'truefalse') {
-    return state.selectedChoice;
-  }
-  const values = [...document.querySelectorAll('[data-order-index]')].map((input) => ({
-    index: Number(input.dataset.orderIndex),
-    rank: Number(input.value),
-  }));
+  if (q.kind === 'choice' || q.kind === 'bonus-choice' || q.kind === 'truefalse') return state.selectedChoice;
+  const values = [...document.querySelectorAll('[data-order-index]')].map((input) => ({ index: Number(input.dataset.orderIndex), rank: Number(input.value) }));
   if (values.some((item) => !item.rank || item.rank < 1 || item.rank > 3)) return null;
-  const uniqueRanks = new Set(values.map((item) => item.rank));
-  if (uniqueRanks.size !== 3) return null;
-  const sortedByRank = values
-    .sort((first, second) => first.rank - second.rank)
-    .map((item) => q.orderItems[item.index].expression);
-  return sortedByRank;
+  if (new Set(values.map((item) => item.rank)).size !== 3) return null;
+  return values.sort((first, second) => first.rank - second.rank).map((item) => q.orderItems[item.index].expression);
 }
 
 function evaluateAnswer(userAnswer) {
   const q = state.currentQuestion;
-  if (q.kind === 'order') {
-    return JSON.stringify(userAnswer) === JSON.stringify(q.answer);
-  }
-  if (q.kind === 'truefalse') {
-    return String(userAnswer).toLowerCase() === q.answer;
-  }
-  if (q.kind === 'choice' || q.kind === 'bonus-choice') {
-    return Number(userAnswer) === q.answer;
-  }
+  if (q.kind === 'order') return JSON.stringify(userAnswer) === JSON.stringify(q.answer);
+  if (q.kind === 'truefalse') return String(userAnswer).toLowerCase() === q.answer;
+  if (q.kind === 'choice' || q.kind === 'bonus-choice') return Number(userAnswer) === q.answer;
   return Number(userAnswer) === q.answer;
 }
 
 function explainCorrectAnswer(q) {
-  if (q.kind === 'order') {
-    return `Die richtige Reihenfolge ist: ${q.answer.join('  <  ')}.`;
-  }
-  if (q.kind === 'truefalse') {
-    return `Richtig wäre: ${q.answer === 'wahr' ? 'Wahr' : 'Falsch'}.`;
-  }
+  if (q.kind === 'order') return `Die richtige Reihenfolge ist: ${q.answer.join('  <  ')}.`;
+  if (q.kind === 'truefalse') return `Richtig wäre: ${q.answer === 'wahr' ? 'Wahr' : 'Falsch'}.`;
   return `Die richtige Antwort ist ${q.answer}.`;
 }
 
@@ -463,9 +408,7 @@ function handleWrong(q) {
   state.streak = 0;
   ELEMENTS.feedback.className = 'feedback-box error';
   ELEMENTS.feedback.innerHTML = `Fast! ${explainCorrectAnswer(q)}`;
-  ELEMENTS.taskArea.classList.remove('shake');
-  void ELEMENTS.taskArea.offsetWidth;
-  ELEMENTS.taskArea.classList.add('shake');
+  ELEMENTS.taskArea.classList.remove('shake'); void ELEMENTS.taskArea.offsetWidth; ELEMENTS.taskArea.classList.add('shake');
 }
 
 function submitAnswer() {
@@ -475,14 +418,8 @@ function submitAnswer() {
     ELEMENTS.feedback.textContent = 'Bitte gib zuerst eine Antwort ein oder wähle etwas aus.';
     return;
   }
-
   const isCorrect = evaluateAnswer(userAnswer);
-  if (isCorrect) {
-    celebrateCorrect(state.currentQuestion.points);
-  } else {
-    handleWrong(state.currentQuestion);
-  }
-
+  if (isCorrect) celebrateCorrect(state.currentQuestion.points); else handleWrong(state.currentQuestion);
   updateHud();
   ELEMENTS.checkAnswer.classList.add('hidden');
   ELEMENTS.nextQuestion.classList.remove('hidden');
@@ -490,16 +427,11 @@ function submitAnswer() {
 
 function nextStep() {
   state.currentIndex += 1;
-  if (state.currentIndex >= state.totalQuestions) {
-    finishGame();
-    return;
-  }
+  if (state.currentIndex >= state.totalQuestions) { finishGame(); return; }
   renderQuestion();
 }
 
-function accuracy() {
-  return Math.round((state.correct / state.totalQuestions) * 100);
-}
+function accuracy() { return Math.round((state.correct / state.totalQuestions) * 100); }
 
 function determineGrade(rate) {
   if (rate >= 90) return 1;
@@ -509,7 +441,7 @@ function determineGrade(rate) {
   return 5;
 }
 
-function finishGame() {
+async function finishGame() {
   const rate = accuracy();
   const grade = determineGrade(rate);
   ELEMENTS.resultHeadline.textContent = `Super gemacht, ${state.playerName}!`;
@@ -522,8 +454,7 @@ function finishGame() {
   ELEMENTS.resultMessage.textContent = RESULT_MESSAGES[grade];
 
   if (state.saveResults) {
-    const history = getHistory();
-    history.push({
+    await saveResult({
       name: state.playerName,
       modeLabel: getModeLabel(state.mode, state.specialMultiplyOnly),
       grade,
@@ -532,10 +463,8 @@ function finishGame() {
       accuracy: rate,
       date: new Date().toLocaleString('de-AT'),
     });
-    setHistory(history);
   }
 
-  renderHistory();
   showScreen('result');
 }
 
@@ -559,53 +488,6 @@ function backToHome() {
   updateSpecialMultiplyVisibility();
 }
 
-function exportHistoryToFile() {
-  const history = getHistory();
-  if (!history.length) {
-    window.alert('Es gibt noch keinen gespeicherten Verlauf zum Exportieren.');
-    return;
-  }
-
-  const payload = {
-    app: 'Mathe-Abenteuer',
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    history,
-  };
-
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `mathe-abenteuer-verlauf-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function importHistoryFromFile(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const parsed = JSON.parse(String(reader.result));
-      const importedHistory = Array.isArray(parsed) ? parsed : parsed.history;
-      if (!Array.isArray(importedHistory)) {
-        throw new Error('Ungültiges Format');
-      }
-      setHistory(importedHistory);
-      renderHistory();
-      window.alert('Verlauf erfolgreich importiert.');
-    } catch (error) {
-      window.alert('Die Datei konnte nicht importiert werden. Bitte eine gültige JSON-Datei verwenden.');
-    } finally {
-      ELEMENTS.importHistoryFile.value = '';
-    }
-  };
-  reader.readAsText(file, 'utf-8');
-}
-
 ELEMENTS.setupForm.addEventListener('submit', (event) => {
   event.preventDefault();
   startGame({
@@ -619,6 +501,7 @@ ELEMENTS.setupForm.addEventListener('submit', (event) => {
 });
 
 ELEMENTS.modeSelect.addEventListener('change', updateSpecialMultiplyVisibility);
+ELEMENTS.syncHistory.addEventListener('click', loadHistory);
 ELEMENTS.checkAnswer.addEventListener('click', submitAnswer);
 ELEMENTS.nextQuestion.addEventListener('click', nextStep);
 ELEMENTS.restartSession.addEventListener('click', () => startGame({
@@ -639,31 +522,34 @@ ELEMENTS.playAgain.addEventListener('click', () => startGame({
   effectsEnabled: state.effectsEnabled,
 }));
 ELEMENTS.goHomeResults.addEventListener('click', backToHome);
-ELEMENTS.exportHistory.addEventListener('click', exportHistoryToFile);
-ELEMENTS.importHistory.addEventListener('click', () => ELEMENTS.importHistoryFile.click());
-ELEMENTS.importHistoryFile.addEventListener('change', (event) => {
-  importHistoryFromFile(event.target.files?.[0]);
-});
-ELEMENTS.clearHistory.addEventListener('click', () => {
+ELEMENTS.clearHistory.addEventListener('click', async () => {
   const password = window.prompt('Bitte Passwort zum Löschen des Verlaufs eingeben:');
   if (password === null) return;
   if (password !== HISTORY_PASSWORD) {
     window.alert('Falsches Passwort. Der Verlauf wurde nicht gelöscht.');
     return;
   }
-  localStorage.removeItem(STORAGE_KEY);
-  renderHistory();
-  window.alert('Der Verlauf wurde gelöscht.');
+  try {
+    await clearHistoryRemote(password);
+    historyCache = [];
+    setFallbackHistory([]);
+    renderHistory();
+    setSyncStatus('Verlauf auf dem Server gelöscht.');
+    window.alert('Der Verlauf wurde gelöscht.');
+  } catch (error) {
+    setFallbackHistory([]);
+    historyCache = [];
+    renderHistory();
+    setSyncStatus('Server nicht erreichbar – lokaler Verlauf gelöscht.');
+    window.alert('Server nicht erreichbar. Nur lokaler Verlauf wurde gelöscht.');
+  }
 });
 
 document.addEventListener('keydown', (event) => {
   if (!SCREENS.game.classList.contains('active')) return;
-  if (event.key === 'Enter' && !ELEMENTS.checkAnswer.classList.contains('hidden')) {
-    submitAnswer();
-  } else if (event.key === 'Enter' && !ELEMENTS.nextQuestion.classList.contains('hidden')) {
-    nextStep();
-  }
+  if (event.key === 'Enter' && !ELEMENTS.checkAnswer.classList.contains('hidden')) submitAnswer();
+  else if (event.key === 'Enter' && !ELEMENTS.nextQuestion.classList.contains('hidden')) nextStep();
 });
 
-renderHistory();
 updateSpecialMultiplyVisibility();
+loadHistory();
