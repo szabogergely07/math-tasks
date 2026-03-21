@@ -45,6 +45,7 @@ const ELEMENTS = {
 };
 
 const STORAGE_KEY = 'mathe-abenteuer-history-v1';
+const HISTORY_PASSWORD = 'schule';
 const LENGTHS = {
   short: 24,
   medium: 48,
@@ -581,8 +582,15 @@ ELEMENTS.playAgain.addEventListener('click', () => startGame({
 }));
 ELEMENTS.goHomeResults.addEventListener('click', backToHome);
 ELEMENTS.clearHistory.addEventListener('click', () => {
+  const password = window.prompt('Bitte Passwort zum Löschen des Verlaufs eingeben:');
+  if (password === null) return;
+  if (password !== HISTORY_PASSWORD) {
+    window.alert('Falsches Passwort. Der Verlauf wurde nicht gelöscht.');
+    return;
+  }
   localStorage.removeItem(STORAGE_KEY);
   renderHistory();
+  window.alert('Der Verlauf wurde gelöscht.');
 });
 
 document.addEventListener('keydown', (event) => {
