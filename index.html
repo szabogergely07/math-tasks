@@ -96,8 +96,14 @@
         <section class="history-card">
           <div class="history-header">
             <h2>Gespeicherte Ergebnisse</h2>
-            <button id="clear-history" class="ghost-btn" type="button">Verlauf löschen</button>
+            <div class="top-actions">
+              <input id="import-history-file" type="file" accept="application/json" class="hidden" />
+              <button id="import-history" class="ghost-btn" type="button">Verlauf importieren</button>
+              <button id="export-history" class="ghost-btn" type="button">Verlauf exportieren</button>
+              <button id="clear-history" class="ghost-btn" type="button">Verlauf löschen</button>
+            </div>
           </div>
+          <p class="player-line">Tipp: Mit Export/Import kannst du Ergebnisse einfach auf einem anderen Gerät weiterverwenden.</p>
           <div id="history-list" class="history-list empty">
             Noch keine Ergebnisse gespeichert.
           </div>

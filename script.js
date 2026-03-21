@@ -14,6 +14,9 @@ const ELEMENTS = {
   saveToggle: document.getElementById('save-toggle'),
   soundToggle: document.getElementById('sound-toggle'),
   clearHistory: document.getElementById('clear-history'),
+  exportHistory: document.getElementById('export-history'),
+  importHistory: document.getElementById('import-history'),
+  importHistoryFile: document.getElementById('import-history-file'),
   historyList: document.getElementById('history-list'),
   playerName: document.getElementById('player-name-display'),
   roundTitle: document.getElementById('round-title'),
@@ -91,6 +94,14 @@ function createInitialState() {
     questions: [],
     currentQuestion: null,
   };
+}
+
+function getHistory() {
+  return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+}
+
+function setHistory(history) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(-50)));
 }
 
 function rand(min, max) {
@@ -260,7 +271,7 @@ function updateSpecialMultiplyVisibility() {
 }
 
 function renderHistory() {
-  const history = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  const history = getHistory();
   if (!history.length) {
     ELEMENTS.historyList.className = 'history-list empty';
     ELEMENTS.historyList.textContent = 'Noch keine Ergebnisse gespeichert.';
@@ -511,7 +522,7 @@ function finishGame() {
   ELEMENTS.resultMessage.textContent = RESULT_MESSAGES[grade];
 
   if (state.saveResults) {
-    const history = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const history = getHistory();
     history.push({
       name: state.playerName,
       modeLabel: getModeLabel(state.mode, state.specialMultiplyOnly),
@@ -521,7 +532,7 @@ function finishGame() {
       accuracy: rate,
       date: new Date().toLocaleString('de-AT'),
     });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(-20)));
+    setHistory(history);
   }
 
   renderHistory();
@@ -546,6 +557,53 @@ function backToHome() {
   showScreen('start');
   renderHistory();
   updateSpecialMultiplyVisibility();
+}
+
+function exportHistoryToFile() {
+  const history = getHistory();
+  if (!history.length) {
+    window.alert('Es gibt noch keinen gespeicherten Verlauf zum Exportieren.');
+    return;
+  }
+
+  const payload = {
+    app: 'Mathe-Abenteuer',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    history,
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `mathe-abenteuer-verlauf-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function importHistoryFromFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+      const importedHistory = Array.isArray(parsed) ? parsed : parsed.history;
+      if (!Array.isArray(importedHistory)) {
+        throw new Error('Ungültiges Format');
+      }
+      setHistory(importedHistory);
+      renderHistory();
+      window.alert('Verlauf erfolgreich importiert.');
+    } catch (error) {
+      window.alert('Die Datei konnte nicht importiert werden. Bitte eine gültige JSON-Datei verwenden.');
+    } finally {
+      ELEMENTS.importHistoryFile.value = '';
+    }
+  };
+  reader.readAsText(file, 'utf-8');
 }
 
 ELEMENTS.setupForm.addEventListener('submit', (event) => {
@@ -581,6 +639,11 @@ ELEMENTS.playAgain.addEventListener('click', () => startGame({
   effectsEnabled: state.effectsEnabled,
 }));
 ELEMENTS.goHomeResults.addEventListener('click', backToHome);
+ELEMENTS.exportHistory.addEventListener('click', exportHistoryToFile);
+ELEMENTS.importHistory.addEventListener('click', () => ELEMENTS.importHistoryFile.click());
+ELEMENTS.importHistoryFile.addEventListener('change', (event) => {
+  importHistoryFromFile(event.target.files?.[0]);
+});
 ELEMENTS.clearHistory.addEventListener('click', () => {
   const password = window.prompt('Bitte Passwort zum Löschen des Verlaufs eingeben:');
   if (password === null) return;
