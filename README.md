@@ -5,7 +5,7 @@ Ein deutsches Mathe-Webspiel für Kinder mit:
 - Addition und Subtraktion von 0 bis 100
 - Multiplikation von 0 bis 10
 - Extra-Option: nur Einmaleins mit 2, 3, 4, 5 und 10
-- Schnellrechner - Malrechnen mit 20 Aufgaben in 45 Sekunden
+- Schnellrechner - Malrechnen mit 20 Aufgaben in 45 Sekunden (Faktoren nur 2 bis 9)
 - mehreren Fragetypen
 - Punkten, Sternen und Abschlussnote wie in Österreich
 - zentral gespeichertem Verlauf über Google Apps Script
@@ -32,8 +32,9 @@ Die App nutzt:
 
 - 20 Malaufgaben
 - 45 Sekunden Zeit
+- Note 1 im Schnellrechner gibt es nur bei höchstens 1 Fehler
 - nach Ablauf der Zeit wird sofort ausgewertet
-- auch mit der Option nur `2, 3, 4, 5, 10`
+- im Schnellrechner werden Faktoren nur von `2` bis `9` verwendet (ohne `1` und `10`)
 
 ## Duplikate im Verlauf
 
