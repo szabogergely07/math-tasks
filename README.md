@@ -64,6 +64,20 @@ function dedupeStoredResults() {
 - `styles.css` – Design und Layout
 - `script.js` – Spiellogik und Google-Apps-Script-Anbindung
 
+## OpenSpec für Änderungen
+
+OpenSpec verwaltet Änderungsvorschläge unter `openspec/changes/` und
+Spezifikationen unter `openspec/specs/`. Die OpenHands-Skills sind im Repository
+enthalten. Mit `/openspec-propose` startest du dort einen Änderungsvorschlag.
+
+Für die CLI brauchst du Node.js ab 22.20.0. Führe im Projektverzeichnis aus:
+
+```bash
+npx --yes --package=@fission-ai/openspec@2.2.0 -- openspec list
+```
+
+OpenSpec ist ein Entwicklungswerkzeug. Das Spiel braucht weiterhin keinen Build-Schritt.
+
 ## GitHub Pages
 
 GitHub Pages kann weiter für das Frontend verwendet werden.
